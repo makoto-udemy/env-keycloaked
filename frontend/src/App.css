@@ -1,0 +1,33 @@
+main {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 2rem;
+  font-family: system-ui, sans-serif;
+}
+
+h1,
+h2 {
+  margin-bottom: 0.75rem;
+}
+
+section {
+  margin-top: 2rem;
+}
+
+ul {
+  padding-left: 1.25rem;
+}
+
+.buttons {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+button {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
