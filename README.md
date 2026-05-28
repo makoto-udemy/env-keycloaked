@@ -18,6 +18,38 @@
 | Frontend (Vite) | 5173 | 15173 |
 | Backend (FastAPI) | 8000 | 18000 |
 
+### ネットワーク構成
+
+```mermaid
+graph LR
+  Browser(["ブラウザ"])
+
+  subgraph Host["ホスト (localhost)"]
+    H1[":10080"]
+    H2[":18080"]
+    H3[":15173"]
+    H4[":18000"]
+  end
+
+  subgraph Network["Docker Network — env-keycloaked_default"]
+    Nginx["Nginx\n:80"]
+    Keycloak["Keycloak\n:8080"]
+    Frontend["Frontend / Vite\n:5173"]
+    Backend["Backend / FastAPI\n:8000"]
+  end
+
+  Browser --> H1 & H2 & H3 & H4
+
+  H1 -->|"port forward"| Nginx
+  H2 -->|"port forward"| Keycloak
+  H3 -->|"port forward"| Frontend
+  H4 -->|"port forward"| Backend
+
+  Nginx -->|"/"| Frontend
+  Nginx -->|"/api/"| Backend
+  Nginx -->|"/auth/"| Keycloak
+```
+
 ## 起動
 
 ```bash
