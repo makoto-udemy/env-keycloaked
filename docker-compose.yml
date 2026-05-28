@@ -1,0 +1,44 @@
+services:
+  reverse-proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "10080:80"
+    volumes:
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - keycloak
+      - frontend
+      - backend
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    command: ["start-dev", "--http-port=8080"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_PROXY_HEADERS: xforwarded
+    ports:
+      - "18080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "15173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "18000:8000"
+    volumes:
+      - ./backend:/app
+
+volumes:
+  frontend_node_modules:
