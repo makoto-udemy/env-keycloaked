@@ -38,16 +38,19 @@ graph LR
     Backend["Backend / FastAPI\n:8000"]
   end
 
-  Browser --> H1 & H2 & H3 & H4
+  Browser -->|"1"| H1
+  Browser -->|"2"| H2
+  Browser -->|"3"| H3
+  Browser -->|"4"| H4
 
-  H1 -->|"port forward"| Nginx
-  H2 -->|"port forward"| Keycloak
-  H3 -->|"port forward"| Frontend
-  H4 -->|"port forward"| Backend
+  H1 -->|"5"| Nginx
+  H2 -->|"6"| Keycloak
+  H3 -->|"7"| Frontend
+  H4 -->|"8"| Backend
 
-  Nginx -->|"/"| Frontend
-  Nginx -->|"/api/"| Backend
-  Nginx -->|"/auth/"| Keycloak
+  Nginx -->|"9"| Frontend
+  Nginx -->|"10"| Backend
+  Nginx -->|"11"| Keycloak
 ```
 
 ## 起動
