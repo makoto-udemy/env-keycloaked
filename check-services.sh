@@ -180,10 +180,10 @@ check_http "Keycloak トップ"        "http://localhost:10800/auth/"
 
 echo ""
 echo -e "  ${BOLD}[ 直アクセス (内部サービス名) ]${RESET}"
-check_http "Keycloak   :18080"       "http://localhost:18080/auth/"
 check_http "Frontend   :15173"       "http://localhost:15173/"
 check_http "Backend    :18000/health" "http://localhost:18000/health"  '"ok"'
 check_http "Backend    :18000/docs"   "http://localhost:18000/docs"
+check_http "Keycloak   :18080"       "http://localhost:18080/auth/"
 
 # ── 外部疎通チェック (ポート転送経由) ────────────────────
 echo ""
@@ -206,10 +206,10 @@ check_host "Keycloak トップ"        "http://localhost:10800/auth/"
 
 echo ""
 echo -e "  ${BOLD}[ 直アクセス ]${RESET}"
-check_host "Keycloak   :18080"       "http://localhost:18080/auth/"
 check_host "Frontend   :15173"       "http://localhost:15173/"
 check_host "Backend    :18000/health" "http://localhost:18000/health"  '"ok"'
 check_host "Backend    :18000/docs"   "http://localhost:18000/docs"
+check_host "Keycloak   :18080"       "http://localhost:18080/auth/"
 
 echo ""
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
