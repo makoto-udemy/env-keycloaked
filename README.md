@@ -65,8 +65,30 @@ graph LR
 
 Docker Compose は Dev Container の外側、WSL2 側のリポジトリディレクトリで実行してください。Dev Container 内から実行すると、bind mount の基準パスが Docker daemon 側で解決できず、空ディレクトリがマウントされることがあります。
 
+通常起動では Reverse Proxy のみをホストへ公開します。
+
 ```bash
 docker compose up --build
+```
+
+### デバッグ用直アクセス
+
+Frontend, Backend, Keycloak へ直接アクセスしたい場合は、明示的に `docker-compose.debug.yml` を重ねて起動します。
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d --build --force-recreate frontend backend keycloak reverse-proxy
+```
+
+このモードでは次の直アクセス用ポートも公開されます。
+
+- Frontend: http://localhost:15173/
+- Backend Swagger: http://localhost:18000/docs
+- Keycloak: http://localhost:18080/auth/
+
+通常の保護された構成へ戻す場合は、ベースの Compose ファイルだけで該当サービスを再作成してください。
+
+```bash
+docker compose up -d --force-recreate frontend backend keycloak reverse-proxy
 ```
 
 ### ポート衝突時
@@ -108,13 +130,19 @@ Keycloak 管理画面にログインすると、通常は `http://localhost:1080
 
 ### 直アクセス
 
-Frontend, Backend, Keycloak のホスト直アクセス用ポートは公開していません。次の URL にブラウザから直接アクセスできないことが期待値です。
+通常起動では、Frontend, Backend, Keycloak のホスト直アクセス用ポートは公開していません。次の URL にブラウザから直接アクセスできないことが期待値です。
 
 - Frontend: http://localhost:15173/
 - Backend Swagger: http://localhost:18000/docs
 - Keycloak: http://localhost:18080/auth/
 
 `check-services.sh` では、内部ネットワークで各サービスが疎通できること、Reverse Proxy 経由の未認証アクセスが OAuth2 ログインへ誘導されること、`admin / admin` で認証後に Frontend、Backend Swagger、OpenAPI JSON へ到達できること、旧直アクセス用の `15173`, `18000`, `18080` に到達できないことを確認します。
+
+`docker-compose.debug.yml` を使って起動した場合は、直アクセス用ポートに到達できることも確認できます。
+
+```bash
+./check-services.sh --debug
+```
 
 ## VS Code Dev Container
 

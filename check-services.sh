@@ -15,6 +15,34 @@ OK="${GREEN}[  OK  ]${RESET}"
 NG="${RED}[  NG  ]${RESET}"
 WARN="${YELLOW}[ WARN ]${RESET}"
 
+DEBUG_MODE=false
+
+usage() {
+  cat <<'USAGE'
+usage: ./check-services.sh [--debug]
+
+  --debug  docker-compose.debug.yml で公開した直アクセス用ポートも確認します
+USAGE
+}
+
+while (($#)); do
+  case "$1" in
+    --debug)
+      DEBUG_MODE=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf "%bunknown option:%b %s\n" "$RED" "$RESET" "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
 # ── HTTP チェック関数 (内部) ─────────────────────────────
 # Docker内部NWで解決できるURLをNginxコンテナ経由でcurl
 # 経路: devcontainer → docker exec → Nginxコンテナ内curl → Docker内部NW
@@ -36,6 +64,16 @@ else
   DOCKER_HOST_IP="localhost"
 fi
 
+REVERSE_PROXY_HOST_PORT="${REVERSE_PROXY_HOST_PORT:-10800}"
+FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-15173}"
+BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-18000}"
+KEYCLOAK_HOST_PORT="${KEYCLOAK_HOST_PORT:-18080}"
+
+PUBLIC_BASE_URL="http://localhost:${REVERSE_PROXY_HOST_PORT}"
+FRONTEND_DIRECT_URL="http://localhost:${FRONTEND_HOST_PORT}/"
+BACKEND_DIRECT_URL="http://localhost:${BACKEND_HOST_PORT}/docs"
+KEYCLOAK_DIRECT_URL="http://localhost:${KEYCLOAK_HOST_PORT}/auth/"
+
 to_host_curl_url() {
   local url="$1"
   if [[ "$IS_INSIDE_CONTAINER" == "true" ]]; then
@@ -56,7 +94,7 @@ to_host_header() {
 
 host_connect_args() {
   if [[ "$IS_INSIDE_CONTAINER" == "true" ]]; then
-    printf '%s\n' --connect-to "localhost:10800:${DOCKER_HOST_IP}:10800"
+    printf '%s\n' --connect-to "localhost:${REVERSE_PROXY_HOST_PORT}:${DOCKER_HOST_IP}:${REVERSE_PROXY_HOST_PORT}"
   fi
 }
 
@@ -167,7 +205,7 @@ check_host_blocked() {
 }
 
 check_oauth2_authenticated_routes() {
-  local base_url="http://localhost:10800"
+  local base_url="$PUBLIC_BASE_URL"
   local cookie_jar="/tmp/env-keycloaked-oauth2-auth-cookies.txt"
   local temp_prefix="/tmp/env-keycloaked-oauth2-auth"
   local connect_args=()
@@ -387,11 +425,11 @@ else
 fi
 echo ""
 
-echo -e "  ${BOLD}[ Reverse Proxy 経由 (ホスト:10800) ]${RESET}"
-check_host_redirect "[1][2][3] Frontend 未認証"      "http://localhost:10800/" "/oauth2/start"
-check_host_redirect "[1][2][4] Backend Swagger 未認証" "http://localhost:10800/api/docs" "/oauth2/start"
-check_host_redirect "[1][2][8][7] OAuth2 ログイン開始" "http://localhost:10800/oauth2/start?rd=http://localhost:10800/" "/auth/realms/env-keycloaked/protocol/openid-connect/auth"
-check_host_redirect "[1][2][7] Keycloak トップ"       "http://localhost:10800/auth/" "/auth/"
+echo -e "  ${BOLD}[ Reverse Proxy 経由 (ホスト:${REVERSE_PROXY_HOST_PORT}) ]${RESET}"
+check_host_redirect "[1][2][3] Frontend 未認証"      "${PUBLIC_BASE_URL}/" "/oauth2/start"
+check_host_redirect "[1][2][4] Backend Swagger 未認証" "${PUBLIC_BASE_URL}/api/docs" "/oauth2/start"
+check_host_redirect "[1][2][8][7] OAuth2 ログイン開始" "${PUBLIC_BASE_URL}/oauth2/start?rd=${PUBLIC_BASE_URL}/" "/auth/realms/env-keycloaked/protocol/openid-connect/auth"
+check_host_redirect "[1][2][7] Keycloak トップ"       "${PUBLIC_BASE_URL}/auth/" "/auth/"
 
 # ── 認証済みアクセス確認 ───────────────────────────────
 echo ""
@@ -401,15 +439,26 @@ echo ""
 
 check_oauth2_authenticated_routes
 
-# ── 直アクセス遮断確認 ─────────────────────────────────
+# ── 直アクセス確認 ───────────────────────────────────
 echo ""
-echo -e "${BOLD}${CYAN}━━━ 直アクセス遮断確認 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "    Reverse Proxyを通らず各サービスのホストポートへ到達できないことを確認します"
+if [[ "$DEBUG_MODE" == "true" ]]; then
+  echo -e "${BOLD}${CYAN}━━━ 直アクセス確認 (debug override) ━━━━━━━━━━━━━━━━━${RESET}"
+  echo -e "    docker-compose.debug.yml で公開したホストポートへ到達できることを確認します"
+else
+  echo -e "${BOLD}${CYAN}━━━ 直アクセス遮断確認 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+  echo -e "    Reverse Proxyを通らず各サービスのホストポートへ到達できないことを確認します"
+fi
 echo ""
 
-check_host_blocked "[9] Frontend   :15173"       "http://localhost:15173/"
-check_host_blocked "[10] Backend    :18000/docs"  "http://localhost:18000/docs"
-check_host_blocked "[11] Keycloak   :18080"       "http://localhost:18080/auth/"
+if [[ "$DEBUG_MODE" == "true" ]]; then
+  check_host "[9] Frontend   :${FRONTEND_HOST_PORT}"       "$FRONTEND_DIRECT_URL" 'id="root"'
+  check_host "[10] Backend    :${BACKEND_HOST_PORT}/docs"  "$BACKEND_DIRECT_URL" "Swagger UI"
+  check_host "[11] Keycloak   :${KEYCLOAK_HOST_PORT}"      "$KEYCLOAK_DIRECT_URL"
+else
+  check_host_blocked "[9] Frontend   :${FRONTEND_HOST_PORT}"       "$FRONTEND_DIRECT_URL"
+  check_host_blocked "[10] Backend    :${BACKEND_HOST_PORT}/docs"  "$BACKEND_DIRECT_URL"
+  check_host_blocked "[11] Keycloak   :${KEYCLOAK_HOST_PORT}"      "$KEYCLOAK_DIRECT_URL"
+fi
 
 echo ""
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
