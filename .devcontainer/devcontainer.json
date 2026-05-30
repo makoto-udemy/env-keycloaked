@@ -10,6 +10,12 @@
     },
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
   },
+  "portsAttributes": {
+    "10800": { "label": "Reverse Proxy (Nginx)" },
+    "18080": { "label": "Keycloak" },
+    "15173": { "label": "Frontend (Vite)" },
+    "18000": { "label": "Backend (FastAPI)" }
+  },
   "postCreateCommand": "pip install -r backend/requirements.txt && npm --prefix frontend install",
   "customizations": {
     "vscode": {

@@ -24,7 +24,7 @@ function App() {
       <section>
         <h2>アクセス先</h2>
         <ul>
-          <li>公開入口(Reverse Proxy): http://localhost:10080</li>
+          <li>公開入口(Reverse Proxy): http://localhost:10800</li>
           <li>認証(直アクセス): http://localhost:18080/auth</li>
           <li>フロント(直アクセス): http://localhost:15173</li>
           <li>バックエンド(直アクセス): http://localhost:18000/docs</li>
