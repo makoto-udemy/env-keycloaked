@@ -21,9 +21,11 @@ services:
       - --login-url=http://localhost:10800/auth/realms/env-keycloaked/protocol/openid-connect/auth
       - --redeem-url=http://keycloak:8080/auth/realms/env-keycloaked/protocol/openid-connect/token
       - --oidc-jwks-url=http://keycloak:8080/auth/realms/env-keycloaked/protocol/openid-connect/certs
+      - --oidc-audience-claim=azp
       - --client-id=oauth2-proxy
       - --client-secret=oauth2-proxy-secret
       - --redirect-url=http://localhost:10800/oauth2/callback
+      - --whitelist-domain=localhost:10800
       - --cookie-secret=0123456789abcdef0123456789abcdef
       - --cookie-secure=false
       - --cookie-samesite=lax

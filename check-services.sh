@@ -54,6 +54,20 @@ to_host_header() {
   echo "${without_scheme%%/*}"
 }
 
+host_connect_args() {
+  if [[ "$IS_INSIDE_CONTAINER" == "true" ]]; then
+    printf '%s\n' --connect-to "localhost:10800:${DOCKER_HOST_IP}:10800"
+  fi
+}
+
+header_status() {
+  awk 'toupper($1) ~ /^HTTP/ { code=$2 } END { print code }' "$1"
+}
+
+header_location() {
+  tr -d '\r' < "$1" | awk 'tolower($1) == "location:" { $1=""; sub(/^ /, ""); print; exit }'
+}
+
 check_host() {
   local label="$1"
   local url="$2"          # ブラウザからアクセスするURL（表示用）
@@ -149,6 +163,128 @@ check_host_blocked() {
   else
     printf "  $NG %s\n" "$label"
     printf "       ${RED}%s${RESET}  HTTP %s  (直接到達できています)\n" "$url" "$http_code"
+  fi
+}
+
+check_oauth2_authenticated_routes() {
+  local base_url="http://localhost:10800"
+  local cookie_jar="/tmp/env-keycloaked-oauth2-auth-cookies.txt"
+  local temp_prefix="/tmp/env-keycloaked-oauth2-auth"
+  local connect_args=()
+  mapfile -t connect_args < <(host_connect_args)
+
+  rm -f "$cookie_jar" "${temp_prefix}"-*.headers "${temp_prefix}"-*.html
+
+  local start_url="${base_url}/oauth2/start?rd=${base_url}/"
+  curl -sS -D "${temp_prefix}-start.headers" -o "${temp_prefix}-start.html" \
+    -c "$cookie_jar" -b "$cookie_jar" "${connect_args[@]}" "$start_url" 2>/dev/null || true
+
+  local login_url
+  login_url=$(header_location "${temp_prefix}-start.headers")
+  if [[ -z "$login_url" ]]; then
+    printf "  $NG [12] OAuth2 ログイン開始\n"
+    printf "       ${RED}%s${RESET}  Location が取得できません\n" "$start_url"
+    return
+  fi
+
+  curl -sS -L -D "${temp_prefix}-login.headers" -o "${temp_prefix}-login.html" \
+    -c "$cookie_jar" -b "$cookie_jar" "${connect_args[@]}" "$login_url" 2>/dev/null || true
+
+  local form_action
+  form_action=$(grep -o 'action="[^"]*"' "${temp_prefix}-login.html" | head -1 | sed 's/^action="//; s/"$//; s/&amp;/\&/g' || true)
+  if [[ -z "$form_action" ]]; then
+    printf "  $NG [12] Keycloak ログインフォーム\n"
+    printf "       ${RED}%s${RESET}  form action が取得できません\n" "$login_url"
+    return
+  fi
+
+  curl -sS -D "${temp_prefix}-submit.headers" -o "${temp_prefix}-submit.html" \
+    -c "$cookie_jar" -b "$cookie_jar" "${connect_args[@]}" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode 'username=admin' \
+    --data-urlencode 'password=admin' \
+    --data-urlencode 'credentialId=' \
+    "$form_action" 2>/dev/null || true
+
+  local callback_url
+  callback_url=$(header_location "${temp_prefix}-submit.headers")
+  if [[ -z "$callback_url" ]]; then
+    printf "  $NG [12] Keycloak 認証\n"
+    printf "       ${RED}%s${RESET}  callback Location が取得できません\n" "$form_action"
+    return
+  fi
+
+  curl -sS -D "${temp_prefix}-callback.headers" -o "${temp_prefix}-callback.html" \
+    -c "$cookie_jar" -b "$cookie_jar" "${connect_args[@]}" "$callback_url" 2>/dev/null || true
+
+  local callback_status final_location
+  callback_status=$(header_status "${temp_prefix}-callback.headers")
+  final_location=$(header_location "${temp_prefix}-callback.headers")
+  if [[ ! "$callback_status" =~ ^30[12378]$ || -z "$final_location" ]]; then
+    printf "  $NG [12] OAuth2 callback\n"
+    printf "       ${RED}%s${RESET}  HTTP %s  -> %s\n" "$callback_url" "${callback_status:-到達不可}" "${final_location:-なし}"
+    return
+  fi
+  printf "  $OK [12] OAuth2 callback\n"
+  printf "       ${GREEN}%s${RESET}  HTTP %s  -> %s\n" "$callback_url" "$callback_status" "$final_location"
+
+  curl -sS -D "${temp_prefix}-frontend.headers" -o "${temp_prefix}-frontend.html" \
+    -c "$cookie_jar" -b "$cookie_jar" "${connect_args[@]}" "$base_url/" 2>/dev/null || true
+  local frontend_status frontend_content
+  frontend_status=$(header_status "${temp_prefix}-frontend.headers")
+  frontend_content=$(cat "${temp_prefix}-frontend.html" 2>/dev/null || true)
+  if [[ "$frontend_status" =~ ^2 && "$frontend_content" == *"id=\"root\""* ]]; then
+    printf "  $OK [13] Frontend 認証後\n"
+    printf "       ${GREEN}%s${RESET}  HTTP %s\n" "$base_url/" "$frontend_status"
+  else
+    printf "  $NG [13] Frontend 認証後\n"
+    printf "       ${RED}%s${RESET}  HTTP %s\n" "$base_url/" "${frontend_status:-到達不可}"
+  fi
+
+  curl -sS -D "${temp_prefix}-api-docs.headers" -o "${temp_prefix}-api-docs.html" \
+    -c "$cookie_jar" -b "$cookie_jar" "${connect_args[@]}" "$base_url/api/docs" 2>/dev/null || true
+  local api_status api_content
+  api_status=$(header_status "${temp_prefix}-api-docs.headers")
+  api_content=$(cat "${temp_prefix}-api-docs.html" 2>/dev/null || true)
+  if [[ "$api_status" =~ ^2 && "$api_content" == *"Swagger UI"* && "$api_content" == *"/api/openapi.json"* ]]; then
+    printf "  $OK [14] Backend Swagger 認証後\n"
+    printf "       ${GREEN}%s${RESET}  HTTP %s\n" "$base_url/api/docs" "$api_status"
+  else
+    printf "  $NG [14] Backend Swagger 認証後\n"
+    printf "       ${RED}%s${RESET}  HTTP %s\n" "$base_url/api/docs" "${api_status:-到達不可}"
+  fi
+
+  curl -sS -D "${temp_prefix}-openapi.headers" -o "${temp_prefix}-openapi.json" \
+    -c "$cookie_jar" -b "$cookie_jar" "${connect_args[@]}" "$base_url/api/openapi.json" 2>/dev/null || true
+  local openapi_status openapi_content
+  openapi_status=$(header_status "${temp_prefix}-openapi.headers")
+  openapi_content=$(cat "${temp_prefix}-openapi.json" 2>/dev/null || true)
+  if [[ "$openapi_status" =~ ^2 && "$openapi_content" == *'"openapi"'* ]]; then
+    printf "  $OK [14b] OpenAPI JSON 認証後\n"
+    printf "       ${GREEN}%s${RESET}  HTTP %s\n" "$base_url/api/openapi.json" "$openapi_status"
+  else
+    printf "  $NG [14b] OpenAPI JSON 認証後\n"
+    printf "       ${RED}%s${RESET}  HTTP %s\n" "$base_url/api/openapi.json" "${openapi_status:-到達不可}"
+  fi
+
+  local session_cookie auth_headers auth_status
+  session_cookie=$(awk '$6 == "_env_keycloaked_oauth2_proxy" { print $6 "=" $7 }' "$cookie_jar" | tail -1)
+  if [[ -z "$session_cookie" ]]; then
+    printf "  $NG [15] OAuth2 auth headers\n"
+    printf "       ${RED}%s${RESET}  session cookie が取得できません\n" "$base_url/oauth2/auth"
+    return
+  fi
+
+  auth_headers=$(docker exec -e AUTH_COOKIE="$session_cookie" "$PROXY_CONTAINER" \
+    sh -c 'curl -sSI -H "X-Forwarded-Proto: http" -H "X-Forwarded-Host: localhost:10800" -H "X-Forwarded-Uri: /" -H "Cookie: $AUTH_COOKIE" http://oauth2-proxy:4180/oauth2/auth' \
+    2>/dev/null || true)
+  auth_status=$(printf '%s\n' "$auth_headers" | awk 'toupper($1) ~ /^HTTP/ { code=$2 } END { print code }')
+  if [[ "$auth_status" =~ ^2 && "$auth_headers" == *"X-Auth-Request-User"* && "$auth_headers" == *"X-Auth-Request-Email"* ]]; then
+    printf "  $OK [15] OAuth2 auth headers\n"
+    printf "       ${GREEN}%s${RESET}  HTTP %s  X-Auth-Request-* OK\n" "$base_url/oauth2/auth" "$auth_status"
+  else
+    printf "  $NG [15] OAuth2 auth headers\n"
+    printf "       ${RED}%s${RESET}  HTTP %s  X-Auth-Request-* 不足\n" "$base_url/oauth2/auth" "${auth_status:-到達不可}"
   fi
 }
 
@@ -256,6 +392,14 @@ check_host_redirect "[1][2][3] Frontend 未認証"      "http://localhost:10800/
 check_host_redirect "[1][2][4] Backend Swagger 未認証" "http://localhost:10800/api/docs" "/oauth2/start"
 check_host_redirect "[1][2][8][7] OAuth2 ログイン開始" "http://localhost:10800/oauth2/start?rd=http://localhost:10800/" "/auth/realms/env-keycloaked/protocol/openid-connect/auth"
 check_host_redirect "[1][2][7] Keycloak トップ"       "http://localhost:10800/auth/" "/auth/"
+
+# ── 認証済みアクセス確認 ───────────────────────────────
+echo ""
+echo -e "${BOLD}${CYAN}━━━ 認証済みアクセス確認 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "    admin/admin でOAuth2ログインし、保護されたURLへ到達できるか確認します"
+echo ""
+
+check_oauth2_authenticated_routes
 
 # ── 直アクセス遮断確認 ─────────────────────────────────
 echo ""

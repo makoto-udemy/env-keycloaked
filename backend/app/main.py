@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="env-keycloaked backend")
+app = FastAPI(title="env-keycloaked backend", root_path="/api")
 
 app.add_middleware(
     CORSMiddleware,
