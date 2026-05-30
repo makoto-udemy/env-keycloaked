@@ -2,43 +2,68 @@ services:
   reverse-proxy:
     image: nginx:1.27-alpine
     ports:
-      - "10080:80"
+      - "${REVERSE_PROXY_HOST_PORT:-10800}:800"
     volumes:
-      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${HOST_WORKSPACE_DIR:-.}/infra/nginx:/etc/nginx/conf.d:ro
     depends_on:
       - keycloak
+      - oauth2-proxy
       - frontend
       - backend
 
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    command:
+      - --http-address=0.0.0.0:4180
+      - --provider=keycloak-oidc
+      - --skip-oidc-discovery=true
+      - --oidc-issuer-url=http://localhost:10800/auth/realms/env-keycloaked
+      - --login-url=http://localhost:10800/auth/realms/env-keycloaked/protocol/openid-connect/auth
+      - --redeem-url=http://keycloak:8080/auth/realms/env-keycloaked/protocol/openid-connect/token
+      - --oidc-jwks-url=http://keycloak:8080/auth/realms/env-keycloaked/protocol/openid-connect/certs
+      - --oidc-audience-claim=azp
+      - --client-id=oauth2-proxy
+      - --client-secret=oauth2-proxy-secret
+      - --redirect-url=http://localhost:10800/oauth2/callback
+      - --whitelist-domain=localhost:10800
+      - --cookie-secret=0123456789abcdef0123456789abcdef
+      - --cookie-secure=false
+      - --cookie-samesite=lax
+      - --cookie-name=_env_keycloaked_oauth2_proxy
+      - --email-domain=*
+      - --reverse-proxy=true
+      - --set-xauthrequest=true
+      - --upstream=static://202
+      - --skip-provider-button=true
+    depends_on:
+      - keycloak
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.3
-    command: ["start-dev", "--http-port=8080"]
+    command: ["start-dev", "--http-port=8080", "--import-realm"]
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:10800/auth
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
       KC_HTTP_RELATIVE_PATH: /auth
       KC_PROXY_HEADERS: xforwarded
-    ports:
-      - "18080:8080"
+    volumes:
+      - ${HOST_WORKSPACE_DIR:-.}/infra/keycloak:/opt/keycloak/data/import:ro
 
   frontend:
     build:
       context: ./frontend
-    ports:
-      - "15173:5173"
     volumes:
-      - ./frontend:/app
+      - ${HOST_WORKSPACE_DIR:-.}/frontend:/app
       - frontend_node_modules:/app/node_modules
 
   backend:
     build:
       context: ./backend
-    ports:
-      - "18000:8000"
     volumes:
-      - ./backend:/app
+      - ${HOST_WORKSPACE_DIR:-.}/backend:/app
 
 volumes:
   frontend_node_modules:

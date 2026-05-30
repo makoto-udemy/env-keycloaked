@@ -3,20 +3,21 @@
 開発初期向けの認証付きWebアプリテンプレートです。
 
 - Reverse Proxy: Nginx
-- 認証: Keycloak
+- 認証: Keycloak + OAuth2 Proxy
 - フロントエンド: React + Vite (TypeScript)
 - バックエンド: FastAPI (Swagger UI 利用可)
 
 ## ポート設計
 
-内部ポートに対して、公開ポートは `+10000` した番号を採用しています。
+ブラウザから直接到達できる公開ポートは Reverse Proxy のみです。Frontend, Backend, Keycloak は Docker 内部ネットワークに閉じ、Nginx と OAuth2 Proxy を経由して利用します。
 
-| Service | 内部 | 公開 |
+| Service | 内部 | 公開（既定） |
 | --- | ---: | ---: |
-| Reverse Proxy (Nginx) | 80 | 10080 |
-| Keycloak | 8080 | 18080 |
-| Frontend (Vite) | 5173 | 15173 |
-| Backend (FastAPI) | 8000 | 18000 |
+| Reverse Proxy (Nginx) | 800 | 10800 |
+| OAuth2 Proxy | 4180 | 未公開 |
+| Keycloak | 8080 | 未公開 |
+| Frontend (Vite) | 5173 | 未公開 |
+| Backend (FastAPI) | 8000 | 未公開 |
 
 ### ネットワーク構成
 
@@ -24,55 +25,127 @@
 graph LR
   Browser(["ブラウザ"])
 
+  Check(["check-services"])
+
   subgraph Host["ホスト (localhost)"]
-    H1[":10080"]
-    H2[":18080"]
-    H3[":15173"]
-    H4[":18000"]
+    H1[":10800"]
+    H2[":15173 未公開"]
+    H3[":18000 未公開"]
+    H4[":18080 未公開"]
   end
 
   subgraph Network["Docker Network — env-keycloaked_default"]
-    Nginx["Nginx\n:80"]
+    Nginx["Nginx\n:800"]
+    OAuth2["OAuth2 Proxy\n:4180"]
     Keycloak["Keycloak\n:8080"]
     Frontend["Frontend / Vite\n:5173"]
     Backend["Backend / FastAPI\n:8000"]
   end
 
-  Browser --> H1 & H2 & H3 & H4
+  Browser -->|"1"| H1
+  H1 -->|"2"| Nginx
 
-  H1 -->|"port forward"| Nginx
-  H2 -->|"port forward"| Keycloak
-  H3 -->|"port forward"| Frontend
-  H4 -->|"port forward"| Backend
+  Nginx -->|"3"| Frontend
+  Nginx -->|"4"| Backend
+  Nginx -->|"7"| Keycloak
+  Nginx -->|"8"| OAuth2
+  OAuth2 -->|"7"| Keycloak
 
-  Nginx -->|"/"| Frontend
-  Nginx -->|"/api/"| Backend
-  Nginx -->|"/auth/"| Keycloak
+  Check -->|"5"| Frontend
+  Check -->|"6"| Backend
+  Check -->|"7"| Keycloak
+  Check -->|"8"| OAuth2
+
+  Browser -.->|"9"| H2
+  Browser -.->|"10"| H3
+  Browser -.->|"11"| H4
 ```
 
 ## 起動
+
+Docker Compose は Dev Container の外側、WSL2 側のリポジトリディレクトリで実行してください。Dev Container 内から実行すると、bind mount の基準パスが Docker daemon 側で解決できず、空ディレクトリがマウントされることがあります。
+
+通常起動では Reverse Proxy のみをホストへ公開します。
 
 ```bash
 docker compose up --build
 ```
 
+### デバッグ用直アクセス
+
+Frontend, Backend, Keycloak へ直接アクセスしたい場合は、明示的に `docker-compose.debug.yml` を重ねて起動します。
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d --build --force-recreate frontend backend keycloak reverse-proxy
+```
+
+このモードでは次の直アクセス用ポートも公開されます。
+
+- Frontend: http://localhost:15173/
+- Backend Swagger: http://localhost:18000/docs
+- Keycloak: http://localhost:18080/auth/
+
+通常の保護された構成へ戻す場合は、ベースの Compose ファイルだけで該当サービスを再作成してください。
+
+```bash
+docker compose up -d --force-recreate frontend backend keycloak reverse-proxy
+```
+
+### ポート衝突時
+
+公開ポートが使用中の場合は、Reverse Proxy の公開ポートを環境変数で変更できます。
+
+```bash
+REVERSE_PROXY_HOST_PORT=10801 docker compose up -d --build
+```
+
+OAuth2 のリダイレクト先は開発用に `http://localhost:10800` を既定にしています。公開ポートを変える場合は OAuth2 Proxy と Keycloak client のリダイレクト設定も合わせて変更してください。
+
+## 認証
+
+初回アクセス時は Keycloak のログイン画面へリダイレクトされます。開発用のユーザーは次の通りです。
+
+```bash
+admin / admin
+```
+
+アプリケーション用の OAuth2 認証は `env-keycloaked` realm を使用します。Keycloak 管理画面は Keycloak の管理者ログインとして扱われますが、開発用の初期ユーザーはいずれも `admin / admin` です。
+
 ## アクセス
 
-### Reverse Proxy 経由
+### 認証後のアクセス
 
-- Frontend: http://localhost:10080/
-- Keycloak: http://localhost:10080/auth/
-- Backend API: http://localhost:10080/api/health
-- Backend Swagger: http://localhost:10080/api/docs
+ブラウザから利用する入口は Reverse Proxy の `http://localhost:10800` のみです。未認証の場合は Keycloak のログイン画面へリダイレクトされ、認証後に元の URL へ戻ります。
 
-### 直アクセス（開発初期向け）
+- Frontend: http://localhost:10800/
+- Backend Swagger: http://localhost:10800/api/docs
+- Keycloak 管理画面: http://localhost:10800/auth/admin/
 
-- Keycloak: http://localhost:18080/auth/
+Keycloak 管理画面にログインすると、通常は `http://localhost:10800/auth/admin/master/console/` へ遷移します。
+
+### Keycloak 関連 URL
+
+- OAuth2 ログイン realm: http://localhost:10800/auth/realms/env-keycloaked
+- Keycloak 管理画面: http://localhost:10800/auth/admin/
+
+### 直アクセス
+
+通常起動では、Frontend, Backend, Keycloak のホスト直アクセス用ポートは公開していません。次の URL にブラウザから直接アクセスできないことが期待値です。
+
 - Frontend: http://localhost:15173/
-- Backend API: http://localhost:18000/health
 - Backend Swagger: http://localhost:18000/docs
+- Keycloak: http://localhost:18080/auth/
+
+`check-services.sh` では、内部ネットワークで各サービスが疎通できること、Reverse Proxy 経由の未認証アクセスが OAuth2 ログインへ誘導されること、`admin / admin` で認証後に Frontend、Backend Swagger、OpenAPI JSON へ到達できること、旧直アクセス用の `15173`, `18000`, `18080` に到達できないことを確認します。
+
+`docker-compose.debug.yml` を使って起動した場合は、直アクセス用ポートに到達できることも確認できます。
+
+```bash
+./check-services.sh --debug
+```
 
 ## VS Code Dev Container
 
 `.devcontainer/devcontainer.json` を用意済みです。
 VS Code で **Reopen in Container** すると Node.js/Python/Docker CLI を使った開発環境が立ち上がります。
+アプリ一式の `docker compose up` は WSL2 側で実行してください。

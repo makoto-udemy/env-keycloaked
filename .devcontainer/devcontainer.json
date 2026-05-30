@@ -10,6 +10,9 @@
     },
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
   },
+  "portsAttributes": {
+    "10800": { "label": "Authenticated App (Nginx)" }
+  },
   "postCreateCommand": "pip install -r backend/requirements.txt && npm --prefix frontend install",
   "customizations": {
     "vscode": {
