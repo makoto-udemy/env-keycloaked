@@ -3,20 +3,21 @@
 開発初期向けの認証付きWebアプリテンプレートです。
 
 - Reverse Proxy: Nginx
-- 認証: Keycloak
+- 認証: Keycloak + OAuth2 Proxy
 - フロントエンド: React + Vite (TypeScript)
 - バックエンド: FastAPI (Swagger UI 利用可)
 
 ## ポート設計
 
-内部ポートに対して、公開ポートは `+10000` した番号を採用しています。
+ブラウザから直接到達できる公開ポートは Reverse Proxy のみです。Frontend, Backend, Keycloak は Docker 内部ネットワークに閉じ、Nginx と OAuth2 Proxy を経由して利用します。
 
 | Service | 内部 | 公開（既定） |
 | --- | ---: | ---: |
 | Reverse Proxy (Nginx) | 800 | 10800 |
-| Keycloak | 8080 | 18080 |
-| Frontend (Vite) | 5173 | 15173 |
-| Backend (FastAPI) | 8000 | 18000 |
+| OAuth2 Proxy | 4180 | 未公開 |
+| Keycloak | 8080 | 未公開 |
+| Frontend (Vite) | 5173 | 未公開 |
+| Backend (FastAPI) | 8000 | 未公開 |
 
 ### ネットワーク構成
 
@@ -24,33 +25,40 @@
 graph LR
   Browser(["ブラウザ"])
 
+  Check(["check-services"])
+
   subgraph Host["ホスト (localhost)"]
     H1[":10800"]
-    H2[":18080"]
-    H3[":15173"]
-    H4[":18000"]
+    H2[":15173 未公開"]
+    H3[":18000 未公開"]
+    H4[":18080 未公開"]
   end
 
   subgraph Network["Docker Network — env-keycloaked_default"]
     Nginx["Nginx\n:800"]
+    OAuth2["OAuth2 Proxy\n:4180"]
     Keycloak["Keycloak\n:8080"]
     Frontend["Frontend / Vite\n:5173"]
     Backend["Backend / FastAPI\n:8000"]
   end
 
   Browser -->|"1"| H1
-  Browser -->|"2"| H2
-  Browser -->|"3"| H3
-  Browser -->|"4"| H4
+  H1 -->|"2"| Nginx
 
-  H1 -->|"5"| Nginx
-  H2 -->|"6"| Keycloak
-  H3 -->|"7"| Frontend
-  H4 -->|"8"| Backend
+  Nginx -->|"3"| Frontend
+  Nginx -->|"4"| Backend
+  Nginx -->|"7"| Keycloak
+  Nginx -->|"8"| OAuth2
+  OAuth2 -->|"7"| Keycloak
 
-  Nginx -->|"9"| Frontend
-  Nginx -->|"10"| Backend
-  Nginx -->|"11"| Keycloak
+  Check -->|"5"| Frontend
+  Check -->|"6"| Backend
+  Check -->|"7"| Keycloak
+  Check -->|"8"| OAuth2
+
+  Browser -.->|"9"| H2
+  Browser -.->|"10"| H3
+  Browser -.->|"11"| H4
 ```
 
 ## 起動
@@ -63,35 +71,50 @@ docker compose up --build
 
 ### ポート衝突時
 
-公開ポートが使用中の場合は、該当ポートを環境変数で変更できます。
+公開ポートが使用中の場合は、Reverse Proxy の公開ポートを環境変数で変更できます。
 
 ```bash
-BACKEND_HOST_PORT=18001 docker compose up -d --build
+REVERSE_PROXY_HOST_PORT=10801 docker compose up -d --build
 ```
 
-複数のポートが衝突している場合は、同時に指定してください。
+OAuth2 のリダイレクト先は開発用に `http://localhost:10800` を既定にしています。公開ポートを変える場合は OAuth2 Proxy と Keycloak client のリダイレクト設定も合わせて変更してください。
+
+## 認証
+
+初回アクセス時は Keycloak のログイン画面へリダイレクトされます。開発用のユーザーは次の通りです。
 
 ```bash
-BACKEND_HOST_PORT=18001 FRONTEND_HOST_PORT=15174 docker compose up -d --build
+admin / admin
 ```
 
-利用できる環境変数は `REVERSE_PROXY_HOST_PORT`, `KEYCLOAK_HOST_PORT`, `FRONTEND_HOST_PORT`, `BACKEND_HOST_PORT` です。
+アプリケーション用の OAuth2 認証は `env-keycloaked` realm を使用します。Keycloak 管理画面は Keycloak の管理者ログインとして扱われますが、開発用の初期ユーザーはいずれも `admin / admin` です。
 
 ## アクセス
 
-### Reverse Proxy 経由
+### 認証後のアクセス
+
+ブラウザから利用する入口は Reverse Proxy の `http://localhost:10800` のみです。未認証の場合は Keycloak のログイン画面へリダイレクトされ、認証後に元の URL へ戻ります。
 
 - Frontend: http://localhost:10800/
-- Keycloak: http://localhost:10800/auth/
-- Backend API: http://localhost:10800/api/health
 - Backend Swagger: http://localhost:10800/api/docs
+- Keycloak 管理画面: http://localhost:10800/auth/admin/
 
-### 直アクセス（開発初期向け）
+Keycloak 管理画面にログインすると、通常は `http://localhost:10800/auth/admin/master/console/` へ遷移します。
 
-- Keycloak: http://localhost:18080/auth/
+### Keycloak 関連 URL
+
+- OAuth2 ログイン realm: http://localhost:10800/auth/realms/env-keycloaked
+- Keycloak 管理画面: http://localhost:10800/auth/admin/
+
+### 直アクセス
+
+Frontend, Backend, Keycloak のホスト直アクセス用ポートは公開していません。次の URL にブラウザから直接アクセスできないことが期待値です。
+
 - Frontend: http://localhost:15173/
-- Backend API: http://localhost:18000/health
 - Backend Swagger: http://localhost:18000/docs
+- Keycloak: http://localhost:18080/auth/
+
+`check-services.sh` では、内部ネットワークで各サービスが疎通できること、Reverse Proxy 経由の未認証アクセスが OAuth2 ログインへ誘導されること、旧直アクセス用の `15173`, `18000`, `18080` に到達できないことを確認します。
 
 ## VS Code Dev Container
 
